@@ -1,0 +1,113 @@
+#include <Wire.h>
+#include <Adafruit_MLX90614.h>
+#include <PulseSensorPlayground.h>
+#include <SoftwareSerial.h>
+#include <ThingSpeak.h>
+
+// ---------------------- WiFi Settings ----------------------
+const char* WIFI_SSID = "YOUR_WIFI_SSID";
+const char* WIFI_PASS = "YOUR_WIFI_PASSWORD";
+
+// ThingSpeak Settings
+#define THINGSPEAK_WRITE_APIKEY "YOUR_THINGSPEAK_WRITE_APIKEY"
+#define THINGSPEAK_CHANNEL_NUMBER 1234567  // replace with your channel number
+
+// ---------------------- Hardware ---------------------------
+Adafruit_MLX90614 mlx = Adafruit_MLX90614();
+PulseSensorPlayground pulseSensor;
+
+// Arduino pins
+const int PULSE_PIN = A0;
+const int PULSE_SAMPLING_INTERVAL = 20; // milliseconds
+
+// ESP8266 SoftwareSerial
+SoftwareSerial espSerial(2, 3); // RX, TX for ESP8266 (adjust pins as needed)
+
+// Variables
+float bodyTemp = 0.0;
+int pulseRate = 0;
+
+// Timing
+unsigned long lastThingSpeakUpdate = 0;
+const unsigned long THINGSPEAK_UPDATE_INTERVAL_MS = 15000; // 15 seconds
+
+// ---------------------- Setup ------------------------------
+void setup() {
+  Serial.begin(9600);
+  espSerial.begin(9600);
+  Wire.begin();
+
+  Serial.println("Healthcare Monitoring System Starting...");
+
+  // Initialize MLX90614
+  if (!mlx.begin()) {
+    Serial.println("Error: MLX90614 not found.");
+    while (1);
+  }
+
+  // Initialize Pulse Sensor
+  pulseSensor.analogInput(PULSE_PIN);
+  pulseSensor.begin();
+
+  // Connect WiFi via ESP8266
+  connectWiFi();
+
+  // Initialize ThingSpeak
+  ThingSpeak.begin(espSerial);
+}
+
+// ---------------------- Main Loop --------------------------
+void loop() {
+  // Read body temperature
+  bodyTemp = mlx.readObjectTempC();
+
+  // Read pulse rate
+  pulseRate = pulseSensor.getBeatsPerMinute();
+
+  // Display locally
+  Serial.print("Body Temperature: ");
+  Serial.print(bodyTemp);
+  Serial.print(" °C\tPulse Rate: ");
+  Serial.println(pulseRate);
+
+  // Send data to ThingSpeak every interval
+  if (millis() - lastThingSpeakUpdate >= THINGSPEAK_UPDATE_INTERVAL_MS) {
+    lastThingSpeakUpdate = millis();
+    sendToThingSpeak(bodyTemp, pulseRate);
+  }
+
+  delay(1000); // 1-second delay
+}
+
+// ---------------------- Functions --------------------------
+void connectWiFi() {
+  Serial.println("Connecting to WiFi...");
+
+  // Send AT commands to ESP8266 to connect WiFi
+  espSerial.println("AT+RST");
+  delay(2000);
+  espSerial.println("AT+CWMODE=1");
+  delay(1000);
+
+  String cmd = "AT+CWJAP=\"" + String(WIFI_SSID) + "\",\"" + String(WIFI_PASS) + "\"";
+  espSerial.println(cmd);
+  delay(5000);
+
+  Serial.println("WiFi connection setup done.");
+}
+
+// Function to send temperature and pulse to ThingSpeak
+void sendToThingSpeak(float temp, int pulse) {
+  Serial.println("Sending data to ThingSpeak...");
+
+  ThingSpeak.setField(1, temp);
+  ThingSpeak.setField(2, pulse);
+
+  int responseCode = ThingSpeak.writeFields(THINGSPEAK_CHANNEL_NUMBER, THINGSPEAK_WRITE_APIKEY);
+  if (responseCode == 200) {
+    Serial.println("ThingSpeak update successful!");
+  } else {
+    Serial.print("ThingSpeak update failed. Code: ");
+    Serial.println(responseCode);
+  }
+}
